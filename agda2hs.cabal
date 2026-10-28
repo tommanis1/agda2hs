@@ -94,7 +94,7 @@ executable agda2hs
                        PatternSynonyms
                        NondecreasingIndentation
                        OverloadedStrings
-  ghc-options:         -Werror -Werror=unused-imports -rtsopts
+  ghc-options:         -Werror -Werror=unused-imports -rtsopts -threaded
 
 test-suite agda2hs-test
   type:                exitcode-stdio-1.0

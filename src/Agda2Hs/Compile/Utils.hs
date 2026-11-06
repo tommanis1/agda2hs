@@ -329,7 +329,8 @@ addInlineSymbols qs = do
   reportSDoc "agda2hs.compile.inline" 15 $
     "Adding inline rules for" <+> pretty qs
   ilSetRef <- asks $ inlineSymbols . globalEnv
-  liftIO $ modifyIORef ilSetRef $ \s -> foldr S.insert s qs
+  -- atomically: with --compile-while-checking, modules are compiled in parallel workers
+  liftIO $ atomicModifyIORef' ilSetRef $ \s -> (foldr S.insert s qs, ())
 
 
 debugCompileToMap :: C ()
@@ -354,7 +355,7 @@ addCompileToName q r = do
     " to " <> prettyShow r
   debugCompileToMap
   ctMapRef <- asks $ compileToMap . globalEnv
-  liftIO $ modifyIORef ctMapRef $ M.insert q r
+  liftIO $ atomicModifyIORef' ctMapRef $ \m -> (M.insert q r m, ())
   debugCompileToMap
 
 withNestedType :: C a -> C a

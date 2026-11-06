@@ -1,14 +1,14 @@
 module Agda2Hs.Render where
 
-import Control.Monad ( unless )
+import Control.Monad ( unless, when )
 import Control.Monad.IO.Class ( MonadIO(liftIO) )
 
 import Data.Function ( on )
 import Data.List ( sortBy, nub, unzip4 )
 import Data.Maybe ( fromMaybe, isNothing )
 
-import System.FilePath ( takeDirectory )
-import System.Directory ( createDirectoryIfMissing )
+import System.Directory ( doesFileExist )
+import System.IO ( readFile' )
 
 import Agda.Compiler.Backend
 
@@ -18,7 +18,7 @@ import Agda.Syntax.Common.Pretty ( prettyShow )
 import Agda2Hs.Compile.Types
 import Agda2Hs.Compile.Imports
 import Agda2Hs.Compile.Exports
-import Agda2Hs.Compile.Utils ( moduleFileName )
+import Agda2Hs.Compile.Utils ( moduleFileName, moduleSourceFile, moduleKey, writeFileAtomic )
 import qualified Agda2Hs.Language.Haskell as Hs
 import Agda2Hs.Language.Haskell.Utils
   ( extToName, pp, moveToTop, insertParens )
@@ -57,9 +57,6 @@ codeBlocks code = [(r, [uncurry Hs.exactPrint $ moveToTop $ noPragmas mcs]) | (r
 
 -- Generating the files -------------------------------------------------------
 
-ensureDirectory :: FilePath -> IO ()
-ensureDirectory = createDirectoryIfMissing True . takeDirectory
-
 -- | Compile the full import list,
 -- with special handling for the @Prelude@ as prescribed by 'Options'.
 compileImportsWithPrelude
@@ -93,7 +90,8 @@ writeModule genv _ isMain m outs = do
       imps = concat impss
       exps = concat expss
       exts = concat extss
-  unless (null code && null defs && isMain == NotMain) $ do
+  let hasHaskell = not (null code && null defs && isMain == NotMain)
+  when hasHaskell $ do
 
     let unlines' [] = []
         unlines' ss = unlines ss ++ "\n"
@@ -118,6 +116,16 @@ writeModule genv _ isMain m outs = do
           , renderBlocks defs
           ]
 
-    reportSLn "" 1 $ "Writing " ++ hsFile
+    -- rewritten only when it differs, so that an unchanged module's Haskell keeps its file and GHC's own check
+    -- of it stops there
+    old <- liftIO $ doesFileExist hsFile >>= \case
+      True  -> Just <$> readFile' hsFile
+      False -> pure Nothing
+    unless (old == Just output) $ do
+      reportSLn "" 1 $ "Writing " ++ hsFile
+      liftIO $ writeFileAtomic hsFile output
 
-    liftIO $ ensureDirectory hsFile >> writeFile hsFile output
+  -- after the Haskell, so that a run stopped in between leaves an old key and the module is compiled again
+  key <- moduleKey genv
+  src <- moduleSourceFile opts m
+  liftIO $ writeFileAtomic src $ unlines [key, if hasHaskell then "hs" else "none"]

@@ -15,10 +15,12 @@ import GHC.Stack (HasCallStack)
 
 import qualified Language.Haskell.Exts as Hs
 
-import System.FilePath ( (</>) )
+import System.Directory ( createDirectoryIfMissing, renameFile )
+import System.FilePath ( (</>), (<.>), takeDirectory )
 
 import Agda.Compiler.Backend hiding ( Args, Strict, Strictness )
-import Agda.Compiler.Common ( compileDir )
+import Agda.Compiler.Common ( compileDir, curIF )
+import Agda.Utils.Hash ( Hash )
 
 import Agda.Syntax.Common
 import qualified Agda.Syntax.Concrete.Name as C
@@ -234,6 +236,36 @@ moduleFileName :: Options -> TopLevelModuleName -> TCM FilePath
 moduleFileName opts name = do
   outDir <- compileDir
   return $ fromMaybe outDir (optOutDir opts) </> moduleNameToFileName name "hs"
+
+-- | The file beside a module's generated Haskell (@M.hs.src@) that records what the Haskell was generated from:
+-- the module's key ('moduleKey') and whether the module has Haskell at all. A run skips a module whose recorded key
+-- is its key now, so the Haskell itself is never compared or touched, and copying the files between trees keeps
+-- the check meaningful (file times would not).
+moduleSourceFile :: Options -> TopLevelModuleName -> TCM FilePath
+moduleSourceFile opts name = (<.> "src") <$> moduleFileName opts name
+
+-- | What the current module's Haskell is a function of: its interface together with its imports' ('iFullHash';
+-- Agda puts a module's own source hash and each import's in it), and agda2hs with its configuration ('toolKey').
+moduleKey :: GlobalEnv -> TCM String
+moduleKey genv = do
+  i <- curIF
+  return $ toolKey genv ++ "-" ++ hashHex (iFullHash i)
+
+-- | A hash as fixed-width hexadecimal.
+hashHex :: Hash -> String
+hashHex h = let s = showHexWord h in replicate (16 - length s) '0' ++ s
+  where showHexWord 0 = "0"
+        showHexWord n = go n ""
+        go 0 acc = acc
+        go n acc = go (n `div` 16) ("0123456789abcdef" !! fromIntegral (n `mod` 16) : acc)
+
+-- | Write a file by renaming a complete copy over it, so that a run stopped while writing leaves the old file or
+-- the new one, never a part.
+writeFileAtomic :: FilePath -> String -> IO ()
+writeFileAtomic file contents = do
+  createDirectoryIfMissing True (takeDirectory file)
+  writeFile (file ++ ".tmp") contents
+  renameFile (file ++ ".tmp") file
 
 getDefAndPragma :: QName -> C (Definition, ParsedPragma)
 getDefAndPragma q = do

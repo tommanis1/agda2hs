@@ -29,6 +29,9 @@ data GlobalEnv = GlobalEnv
   -- ^ names with a compile-to pragma
   , inlineSymbols :: IORef (Set QName)
   -- ^ names of functions that should be inlined
+  , toolKey :: String
+  -- ^ what every module's output depends on besides its interface: the agda2hs executable, its configuration
+  -- file and its language extensions (see 'Agda2Hs.Compile.Utils.moduleKey')
   }
 
 type ModuleEnv   = TopLevelModuleName

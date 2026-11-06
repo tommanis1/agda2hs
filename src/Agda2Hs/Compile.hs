@@ -2,7 +2,9 @@ module Agda2Hs.Compile where
 
 import Prelude hiding (null)
 
+import Control.Monad ( forM, forM_ )
 import Control.Monad.IO.Class
+import qualified Data.ByteString as BS
 import Control.Monad.Trans.RWS.CPS ( evalRWST )
 import Control.Monad.State ( gets )
 import Control.Arrow ((>>>))
@@ -13,8 +15,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 import Agda.Compiler.Backend
-import Agda.Compiler.Common ( curIF )
-import Agda.Utils.FileName ( isNewerThan )
+import Agda.Compiler.Common ( curIF, curDefs, sortDefs )
+import Agda.Utils.Hash ( hashByteString, hashString, combineHashes )
 import Agda.Syntax.Common.Pretty ( prettyShow )
 import Agda.TypeChecking.Pretty
 import Agda.Utils.Impossible
@@ -35,12 +37,20 @@ import Agda2Hs.Pragma
 
 import qualified Agda2Hs.Language.Haskell as Hs
 
+import System.Directory ( doesFileExist )
+import System.Environment ( getExecutablePath )
+import System.IO ( readFile' )
+
 globalSetup :: Options -> TCM GlobalEnv
 globalSetup opts = do
   opts <- checkConfig opts
   ctMap <- liftIO $ newIORef M.empty
   ilMap <- liftIO $ newIORef S.empty
-  return $ GlobalEnv opts ctMap ilMap
+  -- the executable itself rather than its version: a rebuilt agda2hs of the same version may print differently
+  exe <- liftIO $ hashByteString <$> (BS.readFile =<< getExecutablePath)
+  config <- liftIO $ maybe (pure 0) (fmap hashByteString . BS.readFile) (optConfigFile opts)
+  let key = hashHex $ combineHashes [exe, config, hashString (show (optExtensions opts))]
+  return $ GlobalEnv opts ctMap ilMap key
 
 initCompileEnv :: GlobalEnv -> TopLevelModuleName -> SpecialRules -> CompileEnv
 initCompileEnv genv tlm rewrites = CompileEnv
@@ -65,25 +75,63 @@ runC :: GlobalEnv -> TopLevelModuleName -> SpecialRules -> C a -> TCM (a, Compil
 runC genv tlm rewrites c = evalRWST c (initCompileEnv genv tlm rewrites) initCompileState
 
 moduleSetup :: GlobalEnv -> IsMain -> TopLevelModuleName -> Maybe FilePath -> TCM (Recompile ModuleEnv ModuleRes)
-moduleSetup genv _ m mifile = do
+moduleSetup genv _ m _ = do
   let opts = globalOptions genv
   -- we never compile primitive modules
   if any (`isPrefixOf` prettyShow m) primModules then pure $ Skip ()
   else do
-    -- check whether the file needs to be recompiled
-    uptodate <- case mifile of
-      Nothing -> pure False
-      Just ifile -> let ofile = moduleFileName opts m in
-        liftIO =<< isNewerThan <$> ofile <*> pure ifile
+    -- up to date when the key recorded beside the Haskell is the module's key now (moduleSourceFile), and the
+    -- Haskell it says exists does
+    key <- moduleKey genv
+    src <- moduleSourceFile opts m
+    hs <- moduleFileName opts m
+    uptodate <- liftIO $ do
+      recorded <- doesFileExist src >>= \case
+        True  -> lines <$> readFile' src
+        False -> pure []
+      case recorded of
+        [k, "hs"]   | k == key -> doesFileExist hs
+        [k, "none"] | k == key -> pure True
+        _                      -> pure False
     if uptodate then do
       reportSDoc "agda2hs.compile" 3 $ text "Module " <+> prettyTCM m <+> text " is already up-to-date"
+      registerRules genv m
       return $ Skip ()
     else do
       reportSDoc "agda2hs.compile" 3 $ text "Compiling module: " <+> prettyTCM m
-      setScope . iInsideScope =<< curIF
-      -- Agda 2.9 no longer recomputes inverse-scope maps in setScope.
-      recomputeInverseScope
+      enterScope
       return $ Recompile m
+
+-- | Make the current module's scope the one names are resolved in, as compiling its definitions needs.
+enterScope :: TCM ()
+enterScope = do
+  setScope . iInsideScope =<< curIF
+  -- Agda 2.9 no longer recomputes inverse-scope maps in setScope.
+  recomputeInverseScope
+
+-- | Record the inline and compile-to rules of a module that is not compiled because it is up to date. Modules
+-- compiled after it in the run read them ('isInlinedFunction', 'getCompileToName'); compiling it would have
+-- recorded them, so without this a module's Haskell would depend on which of its imports this run compiled.
+registerRules :: GlobalEnv -> TopLevelModuleName -> TCM ()
+registerRules genv m = do
+  defs <- map snd . sortDefs <$> curDefs
+  ruled <- fmap concat $ forM defs $ \def -> do
+    (p, _) <- runC genv m (optRewrites (globalOptions genv)) $ processPragma (defName def)
+    return [(def, p) | isRule p (theDef def)]
+  unless (null ruled) $ do
+    enterScope
+    forM_ ruled $ \(def, p) ->
+      withCurrentModule (qnameModule (defName def)) $
+        runC genv m (optRewrites (globalOptions genv)) $ setCurrentRangeQ (defName def) $ case (p, theDef def) of
+          (InlinePragma     , _         ) -> checkInlinePragma def
+          (CompileToPragma s, Datatype{}) -> checkCompileToDataPragma def s
+          (CompileToPragma s, _         ) -> checkCompileToFunctionPragma def s
+          _                               -> __IMPOSSIBLE__
+  where
+    isRule InlinePragma        Function{} = True
+    isRule (CompileToPragma _) Datatype{} = True
+    isRule (CompileToPragma _) Function{} = True
+    isRule _                   _          = False
 
 -- Main compile function
 ------------------------

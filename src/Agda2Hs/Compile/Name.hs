@@ -31,6 +31,7 @@ import Agda.Utils.Monad ( orM, whenM )
 import Agda2Hs.AgdaUtils
 import Agda2Hs.Compile.Types
 import Agda2Hs.Compile.Utils
+import Agda2Hs.Pragma ( processPragma, ParsedPragma(..) )
 
 import qualified Agda2Hs.Language.Haskell as Hs
 import Agda2Hs.Language.Haskell.Utils ( hsName, hsModuleName, pp, validModuleName )
@@ -103,6 +104,14 @@ compileQName :: QName -> C (Hs.QName ())
 compileQName f = do
   whenM (isInlinedFunction f) $
     agda2hsErrorM $ "Failed to inline definition of" <+> prettyTCM f
+  -- A rule that was never recorded would compile f as an ordinary name, silently wrong: the rules are recorded
+  -- while compiling or skipping f's module (moduleSetup), so this is an agda2hs fault, reported as one.
+  processPragma f >>= \case
+    InlinePragma -> agda2hsErrorM $
+      "The inline rule of" <+> prettyTCM f <+> "was not recorded before its use (an agda2hs fault)"
+    CompileToPragma _ -> whenNothingM (getCompileToName f) $ agda2hsErrorM $
+      "The compile-to rule of" <+> prettyTCM f <+> "was not recorded before its use (an agda2hs fault)"
+    _ -> return ()
   whenJustM (getCompileToName f) $ \g ->
     reportSDoc "agda2hs.compile.to" 20 $ text $
       "compiling name " <> prettyShow f <> " to " <> prettyShow g

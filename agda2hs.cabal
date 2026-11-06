@@ -94,7 +94,10 @@ executable agda2hs
                        PatternSynonyms
                        NondecreasingIndentation
                        OverloadedStrings
-  ghc-options:         -Werror -Werror=unused-imports -rtsopts -threaded
+  -- RTS defaults (Tovrin gen root, -j4): GHC's few-MB nursery spent half the run in some 180k minor
+  -- collections (626 s, 6.9 GB); -A64M: about 330-380 s, 4.6-4.7 GB. -qg: serial GC, less CPU on a shared box.
+  -- GHCRTS and +RTS still override.
+  ghc-options:         -Werror -Werror=unused-imports -rtsopts -threaded "-with-rtsopts=-A64M -qg"
 
 test-suite agda2hs-test
   type:                exitcode-stdio-1.0

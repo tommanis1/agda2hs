@@ -24,6 +24,7 @@ import Agda.Utils.List
 import Agda.Utils.Null
 import Agda.Utils.Monad ( whenM, anyM, when, unless )
 
+import Agda2Hs.AgdaUtils ( publicQNames )
 import Agda2Hs.Compile.ClassInstance ( compileInstance )
 import Agda2Hs.Compile.Data ( compileData, checkCompileToDataPragma )
 import Agda2Hs.Compile.Function ( compileFun, checkTransparentPragma, checkInlinePragma, checkCompileToFunctionPragma )
@@ -50,12 +51,22 @@ globalSetup opts = do
   exe <- liftIO $ hashByteString <$> (BS.readFile =<< getExecutablePath)
   config <- liftIO $ maybe (pure 0) (fmap hashByteString . BS.readFile) (optConfigFile opts)
   let key = hashHex $ combineHashes [exe, config, hashString (show (optExtensions opts))]
-  return $ GlobalEnv opts ctMap ilMap key
+  tlMap <- liftIO $ newIORef M.empty
+  return $ GlobalEnv opts ctMap ilMap key tlMap
 
-initCompileEnv :: GlobalEnv -> TopLevelModuleName -> SpecialRules -> CompileEnv
-initCompileEnv genv tlm rewrites = CompileEnv
+-- | The module environment of the current module ('curIF'), read from the scope as it is now: call it after
+-- 'enterScope'.
+moduleEnv :: TopLevelModuleName -> TCM ModuleEnv
+moduleEnv m = do
+  scope <- getScope
+  defs  <- curDefs
+  return $ ModuleEnv m (publicQNames scope) (sortDefs defs)
+
+initCompileEnv :: GlobalEnv -> ModuleEnv -> SpecialRules -> CompileEnv
+initCompileEnv genv menv rewrites = CompileEnv
   { globalEnv         = genv
-  , currModule        = tlm
+  , currModule        = menvName menv
+  , currModuleEnv     = menv
   , minRecordName     = Nothing
   , isNestedInType    = False
   , locals            = []
@@ -71,8 +82,8 @@ initCompileEnv genv tlm rewrites = CompileEnv
 initCompileState :: CompileState
 initCompileState = CompileState { lcaseUsed = 0 }
 
-runC :: GlobalEnv -> TopLevelModuleName -> SpecialRules -> C a -> TCM (a, CompileOutput)
-runC genv tlm rewrites c = evalRWST c (initCompileEnv genv tlm rewrites) initCompileState
+runC :: GlobalEnv -> ModuleEnv -> SpecialRules -> C a -> TCM (a, CompileOutput)
+runC genv menv rewrites c = evalRWST c (initCompileEnv genv menv rewrites) initCompileState
 
 moduleSetup :: GlobalEnv -> IsMain -> TopLevelModuleName -> Maybe FilePath -> TCM (Recompile ModuleEnv ModuleRes)
 moduleSetup genv _ m _ = do
@@ -100,7 +111,7 @@ moduleSetup genv _ m _ = do
     else do
       reportSDoc "agda2hs.compile" 3 $ text "Compiling module: " <+> prettyTCM m
       enterScope
-      return $ Recompile m
+      Recompile <$> moduleEnv m
 
 -- | Make the current module's scope the one names are resolved in, as compiling its definitions needs.
 enterScope :: TCM ()
@@ -114,15 +125,17 @@ enterScope = do
 -- recorded them, so without this a module's Haskell would depend on which of its imports this run compiled.
 registerRules :: GlobalEnv -> TopLevelModuleName -> TCM ()
 registerRules genv m = do
-  defs <- map snd . sortDefs <$> curDefs
-  ruled <- fmap concat $ forM defs $ \def -> do
-    (p, _) <- runC genv m (optRewrites (globalOptions genv)) $ processPragma (defName def)
+  -- reading the pragmas needs no scope; its environment's lazy fields are never read
+  menv0 <- moduleEnv m
+  ruled <- fmap concat $ forM (map snd (menvSortedDefs menv0)) $ \def -> do
+    (p, _) <- runC genv menv0 (optRewrites (globalOptions genv)) $ processPragma (defName def)
     return [(def, p) | isRule p (theDef def)]
   unless (null ruled) $ do
     enterScope
+    menv <- moduleEnv m
     forM_ ruled $ \(def, p) ->
       withCurrentModule (qnameModule (defName def)) $
-        runC genv m (optRewrites (globalOptions genv)) $ setCurrentRangeQ (defName def) $ case (p, theDef def) of
+        runC genv menv (optRewrites (globalOptions genv)) $ setCurrentRangeQ (defName def) $ case (p, theDef def) of
           (InlinePragma     , _         ) -> checkInlinePragma def
           (CompileToPragma s, Datatype{}) -> checkCompileToDataPragma def s
           (CompileToPragma s, _         ) -> checkCompileToFunctionPragma def s
@@ -139,9 +152,9 @@ registerRules genv m = do
 compile
   :: GlobalEnv -> ModuleEnv -> IsMain -> Definition
   -> TCM (CompiledDef, CompileOutput)
-compile genv tlm _ def =
+compile genv menv _ def =
   withCurrentModule (qnameModule qname)
-    $ runC genv tlm (optRewrites opts)
+    $ runC genv menv (optRewrites opts)
     $ setCurrentRangeQ qname
     $ compileAndTag <* postCompile
   where

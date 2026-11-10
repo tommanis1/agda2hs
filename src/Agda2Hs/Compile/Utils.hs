@@ -43,7 +43,7 @@ import Agda.Utils.Maybe
 import Agda.Utils.Monad
 import Agda.Utils.Singleton
 
-import Agda2Hs.AgdaUtils ( (~~), isPublicName )
+import Agda2Hs.AgdaUtils ( (~~) )
 import Agda2Hs.Compile.Types
 import Agda2Hs.Pragma
 import qualified Data.List as L
@@ -498,7 +498,7 @@ doNameCheck = reader checkNames
 
 shouldBeExported :: QName -> C Bool
 shouldBeExported name = andM
-  [ isPublicName name
+  [ asks (S.member name . menvPublicNames . currModuleEnv)
   , asks (not . compilingLocal)
   , isNothing <$> isUnboxRecord name
   , isNothing <$> isUnboxConstructor name

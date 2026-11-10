@@ -32,9 +32,22 @@ data GlobalEnv = GlobalEnv
   , toolKey :: String
   -- ^ what every module's output depends on besides its interface: the agda2hs executable, its configuration
   -- file and its language extensions (see 'Agda2Hs.Compile.Utils.moduleKey')
+  , topLevelOf :: IORef (Map ModuleName TopLevelModuleName)
+  -- ^ the top-level module each module name met so far lies in ('Agda2Hs.Compile.Name.compileModuleName').
+  -- Finding it asks the file system for every prefix of the name, and Agda remembers only the files it finds,
+  -- so without this every name in a record, where or nested module asked again at each use.
   }
 
-type ModuleEnv   = TopLevelModuleName
+-- | What compiling the definitions of one module shares. The last two fields are lazy: they are computed at the
+-- first definition that needs them and then once for the module, not once per definition.
+data ModuleEnv = ModuleEnv
+  { menvName :: TopLevelModuleName
+  , menvPublicNames :: Set QName
+  -- ^ the names the module's scope makes public ('Agda2Hs.Compile.Utils.shouldBeExported')
+  , menvSortedDefs :: [(QName, Definition)]
+  -- ^ the module's definitions in source order ('Agda2Hs.Compile.Function.withFunctionLocals')
+  }
+
 type ModuleRes   = ()
 type CompiledDef = [Ranged [Hs.Decl ()]]
 type Ranged a    = (Range, a)
@@ -85,6 +98,8 @@ data CompileEnv = CompileEnv
   -- ^ global environment
   , currModule :: TopLevelModuleName
   -- ^ the current module we are compiling
+  , currModuleEnv :: ModuleEnv
+  -- ^ what its definitions share
   , minRecordName :: Maybe ModuleName
   -- ^ keeps track of the current minimal record we are compiling
   , isNestedInType :: Bool

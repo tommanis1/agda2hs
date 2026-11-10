@@ -162,9 +162,7 @@ resolveStringName s = do
     DefinedName _ aname _ -> return $ anameName aname
     _ -> liftTCM $ typeError $ CustomBackendError "agda2hs" $ fromString $ "Couldn't find " ++ s
 
-isPublicName :: (MonadTCM m) => QName -> m Bool
-isPublicName qname = liftTCM $ do
-  scopeInfo <- getScope
-  let pubNames = Set.mapMonotonic anameName $ publicNames scopeInfo
-  reportSDoc "agda2hs.public" 40 $ pretty pubNames
-  pure $! Set.member qname pubNames
+-- | The names a scope makes public. Computing it merges every public module of the scope, so it is taken once
+-- per module ('Agda2Hs.Compile.Types.menvPublicNames'), not once per name asked about.
+publicQNames :: ScopeInfo -> Set.Set QName
+publicQNames = Set.mapMonotonic anameName . publicNames

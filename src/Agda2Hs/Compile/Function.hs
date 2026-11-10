@@ -4,7 +4,6 @@ import Control.Arrow ( (***) )
 import Control.Monad.Reader ( asks )
 
 import Agda.Compiler.Backend hiding (Args, Strictness)
-import Agda.Compiler.Common
 
 import Agda.Syntax.Common
 import Agda.Syntax.Internal
@@ -363,7 +362,7 @@ withFunctionLocals q k = do
       -- references to existing definitions, not local declarations to compile.
       . filter (not . defCopy . snd)
       . filter (usableModality . getModality . snd)
-      . sortDefs <$> liftTCM curDefs
+      <$> asks (menvSortedDefs . currModuleEnv)
   reportSDoc "agda2hs.compile.locals" 17 $ "Function locals: "<+> prettyTCM ls
   withLocals ls k
 

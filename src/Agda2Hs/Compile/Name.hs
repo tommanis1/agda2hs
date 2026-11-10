@@ -7,6 +7,7 @@ import Control.Monad.Except ( catchError )
 import Control.Monad.Reader
 
 import Data.Foldable1
+import Data.IORef
 import Data.List ( intercalate )
 import qualified Data.Text as Text
 import qualified Data.Map.Strict as Map
@@ -277,7 +278,12 @@ hsTopLevelModuleName = hsModuleName . Text.unpack . Text.intercalate "."
 -- compute the associated Haskell module name.
 compileModuleName :: ModuleName -> C (HsModuleKind, Hs.ModuleName ())
 compileModuleName m = do
-  tlm <- liftTCM $ hsTopLevelModuleName <$> getTopLevelModuleForModuleName m
+  known <- asks (topLevelOf . globalEnv)
+  tlm <- fmap hsTopLevelModuleName $ liftIO (Map.lookup m <$> readIORef known) >>= \case
+    Just t  -> return t
+    Nothing -> do
+      t <- liftTCM $ getTopLevelModuleForModuleName m
+      t <$ liftIO (atomicModifyIORef' known $ \ts -> (Map.insert m t ts, ()))
   reportSDoc "agda2hs.name" 25 $
     "Top-level module name for" <+> prettyTCM m <+> "is" <+> text (pp tlm)
   case hsModuleKind tlm of

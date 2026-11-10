@@ -5,6 +5,7 @@ import Prelude hiding (null)
 import Control.Monad ( forM, forM_ )
 import Control.Monad.IO.Class
 import qualified Data.ByteString as BS
+import qualified Data.Hashable as Hashable
 import Control.Monad.Trans.RWS.CPS ( evalRWST )
 import Control.Monad.State ( gets )
 import Control.Arrow ((>>>))
@@ -47,8 +48,10 @@ globalSetup opts = do
   opts <- checkConfig opts
   ctMap <- liftIO $ newIORef M.empty
   ilMap <- liftIO $ newIORef S.empty
-  -- the executable itself rather than its version: a rebuilt agda2hs of the same version may print differently
-  exe <- liftIO $ hashByteString <$> (BS.readFile =<< getExecutablePath)
+  -- the executable itself rather than its version: a rebuilt agda2hs of the same version may print differently.
+  -- Hashed with hashable (a block hash in C): Agda's 'hashByteString' folds byte by byte, a quarter of a second
+  -- on the 129 MB executable at every start.
+  exe <- liftIO $ fromIntegral . Hashable.hash <$> (BS.readFile =<< getExecutablePath)
   config <- liftIO $ maybe (pure 0) (fmap hashByteString . BS.readFile) (optConfigFile opts)
   let key = hashHex $ combineHashes [exe, config, hashString (show (optExtensions opts))]
   tlMap <- liftIO $ newIORef M.empty

@@ -103,7 +103,7 @@ setCurrentRangeQ = setCurrentRange . nameBindingSite . qnameName
 
 isInScopeUnqualified :: QName -> C Bool
 isInScopeUnqualified x = lift $ do
-  recomputeInverseScope
+  -- no recompute of the inverse scope: it is current (see 'Agda2Hs.Compile.Name.compileQName')
   inScope <- isNameInScopeUnqualified x <$> getScope
   reportSDoc "agda2hs.scope-check" 40 $
     "unqualified scope check for" <+> prettyTCM x <+> "=>" <+> text (show inScope)

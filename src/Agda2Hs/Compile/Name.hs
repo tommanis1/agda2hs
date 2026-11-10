@@ -197,7 +197,8 @@ compileQName f = do
 
     getQualifier :: QName -> Hs.ModuleName () -> C Qualifier
     getQualifier f mod = do
-      recomputeInverseScope
+      -- The inverse scope is current here: 'Agda2Hs.Compile.enterScope' and Agda's 'setCurrentModule' recompute
+      -- it when they change the scope. Recomputing it per name walked the whole scope once per name compiled.
       scope <- getScope
       let names = inverseScopeLookupName f scope
           validNames = filter validModuleQualifier names

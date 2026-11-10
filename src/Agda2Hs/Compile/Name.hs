@@ -198,6 +198,15 @@ compileQName f = do
 
     getQualifier :: QName -> Hs.ModuleName () -> C Qualifier
     getQualifier f mod = do
+      known <- asks (menvQualifiers . currModuleEnv)
+      liftIO (Map.lookup f <$> readIORef known) >>= \case
+        Just q  -> return q
+        Nothing -> do
+          q <- findQualifier f mod
+          q <$ liftIO (modifyIORef' known (Map.insert f q))
+
+    findQualifier :: QName -> Hs.ModuleName () -> C Qualifier
+    findQualifier f mod = do
       -- The inverse scope is current here: 'Agda2Hs.Compile.enterScope' and Agda's 'setCurrentModule' recompute
       -- it when they change the scope. Recomputing it per name walked the whole scope once per name compiled.
       scope <- getScope

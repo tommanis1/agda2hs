@@ -60,7 +60,7 @@ moduleEnv :: TopLevelModuleName -> TCM ModuleEnv
 moduleEnv m = do
   scope <- getScope
   defs  <- curDefs
-  return $ ModuleEnv m (publicQNames scope) (sortDefs defs)
+  ModuleEnv m (publicQNames scope) (sortDefs defs) <$> liftIO (newIORef M.empty)
 
 initCompileEnv :: GlobalEnv -> ModuleEnv -> SpecialRules -> CompileEnv
 initCompileEnv genv menv rewrites = CompileEnv

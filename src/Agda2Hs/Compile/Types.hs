@@ -46,6 +46,9 @@ data ModuleEnv = ModuleEnv
   -- ^ the names the module's scope makes public ('Agda2Hs.Compile.Utils.shouldBeExported')
   , menvSortedDefs :: [(QName, Definition)]
   -- ^ the module's definitions in source order ('Agda2Hs.Compile.Function.withFunctionLocals')
+  , menvQualifiers :: IORef (Map QName Qualifier)
+  -- ^ how each name met so far is qualified in this module ('Agda2Hs.Compile.Name.compileQName'). It is a
+  -- function of the name and the module's scope alone, and finding it resolves every rendering of the name.
   }
 
 type ModuleRes   = ()
